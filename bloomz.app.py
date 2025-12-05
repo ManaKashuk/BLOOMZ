@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 from datetime import datetime
-library_318 = pd.read_csv("data/bloomz_mass_318.csv")
 
 st.set_page_config(
     page_title="Bloomz v0.1 – Academic GC–MS Companion",

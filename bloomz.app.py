@@ -11,9 +11,9 @@ st.set_page_config(
 st.sidebar.title("Bloomz v0.1 (Academic Only)")
 st.sidebar.caption("GC–MS helper for natural products – NO suppliers, NO marketplace.")
 
-# --- Load or create internal library (you can replace this with your own CSV) ---
+# --- Load library_318 ---
 @st.cache_data
-def load_internal_library():
+def library_318():
     data = {
         "plant_name": ["Plant A", "Plant A", "Plant B"],
         "compound_name": ["Limonene", "β-Caryophyllene", "Costunolide"],

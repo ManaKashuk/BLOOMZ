@@ -1,6 +1,4 @@
 streamlit
 pandas
 numpy
-altair
-rdkit-pypi
-pyteomics
+altairq  

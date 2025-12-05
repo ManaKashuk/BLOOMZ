@@ -27,7 +27,6 @@ def library_318():
     }
     return pd.DataFrame(data)
 
-library_df = library_318()
 library_318 = pd.read_csv("data/bloomz_mass_318.csv")
 
 # Simple in-memory history store (replace with DB later if needed)

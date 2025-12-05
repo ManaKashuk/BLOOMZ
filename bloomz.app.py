@@ -1,394 +1,215 @@
-# bloomz_app.py
-# Prototype Streamlit layout for Bloomz v0.1
-# Bioactive Library for Mass Spectrometry – Natural Products GC–MS Support
-
 import streamlit as st
 import pandas as pd
-import numpy as np
 import altair as alt
+from datetime import datetime
 
-# -----------------------
-# Page Configuration
-# -----------------------
 st.set_page_config(
-    page_title="Bloomz v0.1 – GC–MS Natural Products Library",
+    page_title="Bloomz v0.1 – Academic GC–MS Companion",
     layout="wide",
 )
 
-# -----------------------
-# Helper: Create Example Data if No File
-# -----------------------
-def create_example_library() -> pd.DataFrame:
+st.sidebar.title("Bloomz v0.1 (Academic Only)")
+st.sidebar.caption("GC–MS helper for natural products – NO suppliers, NO marketplace.")
+
+# --- Load or create internal library (you can replace this with your own CSV) ---
+@st.cache_data
+def load_internal_library():
     data = {
-        "sample": ["Plant_A_leaf", "Plant_A_leaf", "Plant_B_root", "Herbal_mix"] * 2,
-        "rt_min": [5.1, 7.3, 10.4, 12.8, 6.0, 9.2, 11.5, 14.1],
-        "rt_max": [5.3, 7.5, 10.7, 13.1, 6.3, 9.5, 11.8, 14.4],
-        "rt_center": [5.2, 7.4, 10.55, 12.95, 6.15, 9.35, 11.65, 14.25],
-        "mz_main": [152, 204, 218, 136, 180, 196, 222, 150],
-        "putative_compound": [
-            "Limonene",
-            "β-Caryophyllene",
-            "Costunolide",
-            "Puupehenone-like",
-            "α-Pinene",
-            "Humulene",
-            "Sesquiterpene lactone X",
-            "Phenolic ester Y",
-        ],
-        "compound_class": [
-            "Monoterpene",
-            "Sesquiterpene",
-            "Sesquiterpene lactone",
-            "Meroterpenoid",
-            "Monoterpene",
-            "Sesquiterpene",
-            "Sesquiterpene lactone",
-            "Phenolic",
-        ],
-        "confidence_1_5": [3, 4, 2, 1, 4, 3, 2, 1],
-        "reference": [
-            "NIST match + lit",
-            "NIST match",
-            "Predicted (lit RT)",
-            "Putative, low confidence",
-            "NIST match",
-            "NIST match",
-            "Putative (class only)",
-            "Class-based",
-        ],
-        "notes": [
-            "Major volatile",
-            "Known anti-inflammatory",
-            "Candidate SL – further confirmation needed",
-            "Marine-like meroterpenoid; check HRMS",
-            "Common needle oil monoterpene",
-            "Co-elution suspected",
-            "Fragmentation resembles costunolide core",
-            "Broad phenolic region",
-        ],
+        "plant_name": ["Plant A", "Plant A", "Plant B"],
+        "compound_name": ["Limonene", "β-Caryophyllene", "Costunolide"],
+        "mw": [136.24, 204.36, 232.28],
+        "formula": ["C10H16", "C15H24", "C15H20O3"],
+        "rt_min": [5.0, 7.0, 10.2],
+        "rt_max": [5.4, 7.5, 10.8],
+        "mz_main": [136, 204, 232],
+        "class": ["Monoterpene", "Sesquiterpene", "Sesquiterpene lactone"],
+        "reference": ["PubChem / lit", "PubChem / lit", "Lit – NP review"],
     }
-    df = pd.DataFrame(data)
-    return df
+    return pd.DataFrame(data)
 
+library_df = load_internal_library()
 
-def load_uploaded_csv(uploaded_file: st.runtime.uploaded_file_manager.UploadedFile) -> pd.DataFrame:
-    df = pd.read_csv(uploaded_file)
-    # Try to infer or repair minimal columns if missing
-    # Expecting at least RT + m/z, we will map into our internal schema as best as possible.
-    # This is intentionally simple for v0.1.
-    col_lower = [c.lower() for c in df.columns]
+# Simple in-memory history store (replace with DB later if needed)
+if "history" not in st.session_state:
+    st.session_state["history"] = pd.DataFrame(
+        columns=["timestamp", "user", "sample_name", "file_name", "top_match", "confidence"]
+    )
 
-    # Minimal mapping
-    rt_col = None
-    for candidate in ["rt", "retention_time", "time"]:
-        if candidate in col_lower:
-            rt_col = df.columns[col_lower.index(candidate)]
-            break
+tab_analyze, tab_results, tab_library, tab_ms, tab_history, tab_admin = st.tabs(
+    ["🔍 Analyze Sample", "📊 Results & Prediction", "📚 Bioactive Library",
+     "⚙ MS Optimization Guide", "🕒 User Analysis History", "📌 Admin / Roadmap"]
+)
 
-    mz_col = None
-    for candidate in ["mz", "m_z", "mass"]:
-        if candidate in col_lower:
-            mz_col = df.columns[col_lower.index(candidate)]
-            break
+# ------------------------------------------------------------------
+# TAB 1 – ANALYZE SAMPLE
+# ------------------------------------------------------------------
+with tab_analyze:
+    st.header("Analyze a New Sample")
+    col1, col2 = st.columns(2)
 
-    # Create a basic Bloomz-style table
-    bloomz_df = pd.DataFrame()
-    bloomz_df["sample"] = df.get("sample", "Unknown_sample")
-    if rt_col is not None:
-        bloomz_df["rt_center"] = df[rt_col]
-        bloomz_df["rt_min"] = df[rt_col] - 0.05
-        bloomz_df["rt_max"] = df[rt_col] + 0.05
+    with col1:
+        user_name = st.text_input("Your name / initials", "")
+        sample_name = st.text_input("Sample name / ID", "Plant extract X")
+        sample_type = st.selectbox("Sample type", ["Plant extract", "Essential oil", "Herbal product", "Other"])
+        ion_mode = st.selectbox("Ionization mode", ["ESI+", "ESI−", "APCI+", "EI"])
+        instr = st.text_input("Instrument (optional)", "GC–MS")
+
+    with col2:
+        uploaded = st.file_uploader(
+            "Upload GC–MS peak table (CSV)",
+            type=["csv"],
+            help="For v0.1, use an exported table with RT and m/z columns.",
+        )
+        st.caption("No live connection to instruments or suppliers – local academic use only.")
+
+    run_btn = st.button("Run Prototype Analysis")
+
+    if run_btn:
+        if uploaded is None:
+            st.error("Please upload a CSV file first.")
+        else:
+            peaks_df = pd.read_csv(uploaded)
+            st.session_state["last_peaks"] = peaks_df
+            st.session_state["last_meta"] = {
+                "user": user_name or "anonymous",
+                "sample_name": sample_name,
+                "file_name": uploaded.name,
+                "sample_type": sample_type,
+                "ion_mode": ion_mode,
+                "instrument": instr,
+            }
+            st.success("Analysis started – go to 'Results & Prediction' tab.")
+
+# ------------------------------------------------------------------
+# TAB 2 – RESULTS & PREDICTION (PROTOTYPE)
+# ------------------------------------------------------------------
+with tab_results:
+    st.header("Results & Prototype Matching")
+
+    if "last_peaks" not in st.session_state:
+        st.info("No sample analyzed yet. Upload a CSV and click 'Run Prototype Analysis' first.")
     else:
-        bloomz_df["rt_center"] = np.nan
-        bloomz_df["rt_min"] = np.nan
-        bloomz_df["rt_max"] = np.nan
+        peaks_df = st.session_state["last_peaks"].copy()
 
-    if mz_col is not None:
-        bloomz_df["mz_main"] = df[mz_col]
-    else:
-        bloomz_df["mz_main"] = np.nan
-
-    # Placeholders for curated/annotated fields
-    bloomz_df["putative_compound"] = df.get("putative_compound", "Unknown")
-    bloomz_df["compound_class"] = df.get("compound_class", "Unassigned")
-    bloomz_df["confidence_1_5"] = df.get("confidence_1_5", 1)
-    bloomz_df["reference"] = df.get("reference", "")
-    bloomz_df["notes"] = df.get("notes", "")
-
-    return bloomz_df
-
-
-# -----------------------
-# Sidebar – Controls
-# -----------------------
-st.sidebar.title("Bloomz v0.1 Controls")
-
-uploaded_file = st.sidebar.file_uploader(
-    "Upload GC–MS peak/annotation CSV (optional)",
-    type=["csv"],
-    help="If not provided, an example Bloomz library will be used.",
-)
-
-if uploaded_file is not None:
-    df = load_uploaded_csv(uploaded_file)
-    using_example = False
-else:
-    df = create_example_library()
-    using_example = True
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("Filters")
-
-# Sample filter
-samples = sorted(df["sample"].dropna().unique().tolist())
-selected_samples = st.sidebar.multiselect(
-    "Samples",
-    options=samples,
-    default=samples,
-)
-
-# Class filter
-classes = sorted(df["compound_class"].dropna().unique().tolist())
-selected_classes = st.sidebar.multiselect(
-    "Compound classes",
-    options=classes,
-    default=classes,
-)
-
-# Confidence filter
-min_conf, max_conf = int(df["confidence_1_5"].min()), int(df["confidence_1_5"].max())
-confidence_range = st.sidebar.slider(
-    "Confidence (1 = low, 5 = high)",
-    min_value=min_conf,
-    max_value=max_conf,
-    value=(min_conf, max_conf),
-    step=1,
-)
-
-# RT range filter (if available)
-if df["rt_center"].notna().any():
-    rt_min = float(df["rt_center"].min())
-    rt_max = float(df["rt_center"].max())
-    rt_range = st.sidebar.slider(
-        "Retention time window",
-        min_value=round(rt_min, 2),
-        max_value=round(rt_max, 2),
-        value=(round(rt_min, 2), round(rt_max, 2)),
-        step=0.1,
-    )
-else:
-    rt_range = (None, None)
-
-# -----------------------
-# Apply Filters
-# -----------------------
-filtered = df.copy()
-
-if selected_samples:
-    filtered = filtered[filtered["sample"].isin(selected_samples)]
-
-if selected_classes:
-    filtered = filtered[filtered["compound_class"].isin(selected_classes)]
-
-filtered = filtered[
-    (filtered["confidence_1_5"] >= confidence_range[0])
-    & (filtered["confidence_1_5"] <= confidence_range[1])
-]
-
-if rt_range[0] is not None:
-    filtered = filtered[
-        (filtered["rt_center"] >= rt_range[0])
-        & (filtered["rt_center"] <= rt_range[1])
-    ]
-
-# -----------------------
-# Main Layout
-# -----------------------
-st.title("Bloomz v0.1 – Bioactive Library for GC–MS Natural Products")
-
-if using_example:
-    st.info(
-        "No file uploaded – showing example Bloomz library. "
-        "Upload your own GC–MS peak/annotation CSV in the sidebar to work with real data."
-    )
-
-st.markdown(
-    """
-**Bloomz v0.1** is an early prototype for a GC–MS–supported natural products library.
-
-The goals of this prototype:
-- Demonstrate how GC–MS peaks and annotations can be organized.
-- Support student training in compound classes and annotation logic.
-- Provide a foundation for future AI-assisted matching and workflow optimization.
-"""
-)
-
-# Quick metrics
-col_m1, col_m2, col_m3 = st.columns(3)
-with col_m1:
-    st.metric("Total compounds in view", len(filtered))
-with col_m2:
-    st.metric("Unique samples", filtered["sample"].nunique())
-with col_m3:
-    st.metric("Classes represented", filtered["compound_class"].nunique())
-
-st.markdown("---")
-
-tab_library, tab_peaks, tab_cards, tab_admin = st.tabs(
-    ["📚 Library View", "📈 Peak Explorer", "🧬 Compound Cards", "⚙ Admin / Roadmap"]
-)
-
-# -----------------------
-# Tab 1 – Library View
-# -----------------------
-with tab_library:
-    st.subheader("Current Bloomz Library Slice")
-    st.caption("Filtered by sample, class, confidence, and retention time.")
-
-    # Reorder columns for nicer display
-    display_cols = [
-        "sample",
-        "putative_compound",
-        "compound_class",
-        "rt_center",
-        "rt_min",
-        "rt_max",
-        "mz_main",
-        "confidence_1_5",
-        "reference",
-        "notes",
-    ]
-    show_df = filtered[display_cols].sort_values(["sample", "rt_center"])
-
-    st.dataframe(show_df, use_container_width=True)
-
-    st.download_button(
-        "Download current view as CSV",
-        data=show_df.to_csv(index=False),
-        file_name="bloomz_current_view.csv",
-        mime="text/csv",
-    )
-
-# -----------------------
-# Tab 2 – Peak Explorer
-# -----------------------
-with tab_peaks:
-    st.subheader("GC–MS Peak Explorer")
-
-    if filtered["rt_center"].notna().any():
-        chart = (
-            alt.Chart(filtered)
-            .mark_circle(size=80)
-            .encode(
-                x=alt.X("rt_center", title="Retention time (min)"),
-                y=alt.Y("mz_main", title="Main m/z"),
-                color=alt.Color("compound_class", title="Class"),
-                tooltip=[
-                    "sample",
-                    "putative_compound",
-                    "compound_class",
-                    "rt_center",
-                    "mz_main",
-                    "confidence_1_5",
-                    "reference",
-                ],
+        # Very simple mock matching: join on closest m/z
+        if "mz" in [c.lower() for c in peaks_df.columns]:
+            # map column name
+            mz_col = [c for c in peaks_df.columns if c.lower() == "mz"][0]
+            peaks_df["mz"] = peaks_df[mz_col]
+        else:
+            st.warning("No 'mz' column detected – showing raw table only.")
+            st.dataframe(peaks_df, use_container_width=True)
+        # crude matching
+        matches = []
+        for _, row in peaks_df.iterrows():
+            mz_val = row.get("mz", None)
+            if mz_val is None:
+                continue
+            # compute simple absolute difference
+            library_df["mz_diff"] = (library_df["mz_main"] - mz_val).abs()
+            best = library_df.sort_values("mz_diff").iloc[0]
+            matches.append(
+                {
+                    "mz": mz_val,
+                    "predicted_compound": best["compound_name"],
+                    "class": best["class"],
+                    "plant_source": best["plant_name"],
+                    "mz_diff": best["mz_diff"],
+                }
             )
-            .interactive()
-        )
-        st.altair_chart(chart, use_container_width=True)
+        match_df = pd.DataFrame(matches)
+        if not match_df.empty:
+            # naive "confidence"
+            match_df["confidence_1_5"] = pd.cut(
+                match_df["mz_diff"],
+                bins=[-0.01, 0.1, 0.5, 1.0, 2.0, 1000],
+                labels=[5, 4, 3, 2, 1],
+            ).astype(int)
+
+            st.subheader("Prototype Match Table")
+            st.dataframe(match_df, use_container_width=True)
+
+            # Save top hit to history
+            meta = st.session_state.get("last_meta", {})
+            if not match_df.empty:
+                top = match_df.sort_values("confidence_1_5", ascending=False).iloc[0]
+                new_row = {
+                    "timestamp": datetime.now().isoformat(timespec="seconds"),
+                    "user": meta.get("user", "anonymous"),
+                    "sample_name": meta.get("sample_name", ""),
+                    "file_name": meta.get("file_name", ""),
+                    "top_match": top["predicted_compound"],
+                    "confidence": int(top["confidence_1_5"]),
+                }
+                st.session_state["history"] = pd.concat(
+                    [st.session_state["history"], pd.DataFrame([new_row])],
+                    ignore_index=True,
+                )
+
+            st.download_button(
+                "Download match table (CSV)",
+                data=match_df.to_csv(index=False),
+                file_name="bloomz_match_results.csv",
+                mime="text/csv",
+            )
+        else:
+            st.warning("No matches could be generated with the current prototype logic.")
+
+# ------------------------------------------------------------------
+# TAB 3 – INTERNAL BIOACTIVE LIBRARY
+# ------------------------------------------------------------------
+with tab_library:
+    st.header("Internal Bioactive Library (Academic Only)")
+    st.caption("Curated from open-access data and your own GC–MS runs. No supplier links, no commercial catalog data.")
+    st.dataframe(library_df, use_container_width=True)
+
+# ------------------------------------------------------------------
+# TAB 4 – MS OPTIMIZATION GUIDE
+# ------------------------------------------------------------------
+with tab_ms:
+    st.header("MS Optimization Guide (Teaching Prototype)")
+    ms_settings = pd.DataFrame({
+        "sample_type": ["Alkaloids", "Flavonoids", "Essential oils"],
+        "suggested_ion_mode": ["ESI+", "ESI− or APCI", "EI"],
+        "resolution": ["High", "Medium", "High"],
+        "fragmentation_voltage": ["35 V", "25 V", "70 eV"],
+        "notes": ["For plant alkaloids", "Phenolic/flavonoid-rich extracts", "Volatile components"],
+    })
+    st.dataframe(ms_settings, use_container_width=True)
+
+# ------------------------------------------------------------------
+# TAB 5 – USER ANALYSIS HISTORY
+# ------------------------------------------------------------------
+with tab_history:
+    st.header("User Analysis History (Session-Level Prototype)")
+    if st.session_state["history"].empty:
+        st.info("No analyses recorded yet.")
     else:
-        st.warning(
-            "No retention time column detected in the data. "
-            "Provide an RT column (rt/retention_time/time) in your CSV to enable the Peak Explorer."
+        st.dataframe(st.session_state["history"], use_container_width=True)
+        st.download_button(
+            "Download history (CSV)",
+            data=st.session_state["history"].to_csv(index=False),
+            file_name="bloomz_history.csv",
+            mime="text/csv",
         )
 
-    st.markdown(
-        """
-**Teaching idea:**  
-Use this view to explain how different compound classes appear in different RT windows and m/z regions.
-"""
-    )
-
-# -----------------------
-# Tab 3 – Compound Cards
-# -----------------------
-with tab_cards:
-    st.subheader("Compound Cards")
-
-    if filtered.empty:
-        st.warning("No compounds match the current filters.")
-    else:
-        # Sort for consistent display
-        card_df = filtered.sort_values(["sample", "rt_center"])
-
-        for _, row in card_df.iterrows():
-            with st.expander(
-                f"{row['putative_compound']}  |  {row['compound_class']}  |  {row['sample']}"
-            ):
-                c1, c2 = st.columns([2, 1])
-                with c1:
-                    st.markdown(
-                        f"""
-**Sample:** {row['sample']}  
-**Putative compound:** {row['putative_compound']}  
-**Class:** {row['compound_class']}  
-**Retention time (center):** {row['rt_center']:.2f} min  
-**Main m/z:** {row['mz_main']}  
-**Confidence (1–5):** {row['confidence_1_5']}  
-**Reference:** {row['reference']}  
-"""
-                    )
-                    st.markdown("**Notes:**")
-                    st.write(row["notes"] if pd.notna(row["notes"]) else "—")
-                with c2:
-                    st.markdown(
-                        """
-*Future placeholders (v0.2+):*
-- Structure preview (SMILES → 2D drawing)
-- AI match score
-- Similarity to known bioactive scaffolds
-- Links to literature
-"""
-                    )
-
-# -----------------------
-# Tab 4 – Admin / Roadmap
-# -----------------------
+# ------------------------------------------------------------------
+# TAB 6 – ADMIN / ROADMAP
+# ------------------------------------------------------------------
 with tab_admin:
-    st.subheader("Admin / Roadmap – Bloomz v0.1")
-
+    st.header("Admin / Roadmap – Academic Prototype")
     st.markdown(
         """
-This prototype is intentionally simple.
+**Scope of this version (v0.1):**
+- Internal academic use only at TSU (or similar labs).
+- No integration with suppliers, vendors, or commercial catalogs.
+- Manual / heuristic matching only – *not* a regulated or validated identification engine.
+- Uses internal + open-access data (e.g., PubChem, literature) curated into the Bloomz library.
 
-**Current capabilities (v0.1):**
-- Load example or user-provided GC–MS peak/annotation tables.
-- Filter compounds by sample, class, RT window, and confidence.
-- Explore peaks in a retention time vs. m/z space.
-- Display compounds as “cards” for teaching and manual review.
-- Export the current filtered library slice.
-
-**Planned next steps (v0.2+):**
-- Add support for separate raw peak files + annotation files.
-- Build internal TSU-specific natural product spectral library.
-- Integrate semi-automated annotation using reference libraries.
-- Add AI-assisted prioritization and similarity scoring.
-- Integrate structure drawing and scaffold classification.
-- Link compounds to PubChem / ChEMBL / natural product databases.
-
-**How this supports TSU GC–MS and R1 goals:**
-- Training students to think in terms of classes + RT + m/z windows.
-- Creating a reusable, growing library specific to TSU projects.
-- Reducing annotation time for recurring compounds.
-- Providing pilot data for equipment/training grants and infrastructure proposals.
+**Future directions:**
+- Better matching logic (RT + m/z + fragmentation).
+- Larger internal library based on your plant projects.
+- Optional connection to institutional LIMS (still research-only).
+- AI scoring and structure suggestion, still without any supplier marketplace.
 """
     )
-
-    if using_example:
-        st.info(
-            "Once integrated with TSU GC–MS data, this page can also track:\n"
-            "- Number of samples processed\n"
-            "- Library growth over time\n"
-            "- Classes represented by project\n"
-            "- Usage metrics for training and research."
-        )

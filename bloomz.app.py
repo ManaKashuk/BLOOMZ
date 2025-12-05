@@ -11,9 +11,9 @@ st.set_page_config(
 st.sidebar.title("Bloomz v0.1 (Academic Only)")
 st.sidebar.caption("GC–MS helper for natural products – NO suppliers, NO marketplace.")
 
-# --- Load library_318 ---
+# --- Load or create internal library (you can replace this with your own CSV) ---
 @st.cache_data
-def library_318():
+def load_internal_library():
     data = {
         "plant_name": ["Plant A", "Plant A", "Plant B"],
         "compound_name": ["Limonene", "β-Caryophyllene", "Costunolide"],
@@ -27,7 +27,7 @@ def library_318():
     }
     return pd.DataFrame(data)
 
-library_318 = pd.read_csv("data/bloomz_mass_318.csv")
+library_df = load_internal_library()
 
 # Simple in-memory history store (replace with DB later if needed)
 if "history" not in st.session_state:

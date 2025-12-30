@@ -106,7 +106,7 @@ def main():
                 <h4 style="color:{BLOOMZ_GREEN};">Core Capability</h4>
                 <p>Welcome to the <b>Spectral Intelligence Hub</b>. This workspace enables proactive discovery of bioactives using high-resolution library verification and agentic mass spectrometry scoring.</p>
                 <hr>
-                <li><b>Database:</b> 499 Verified Jordanian Compounds</li>
+                <li><b>Database:</b> 499 Verified Compounds</li>
                 <li><b>Precision:</b> ±{mass_gate} m/z Enforcement</li>
             </div>
         """, unsafe_allow_html=True)

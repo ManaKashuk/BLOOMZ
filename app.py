@@ -90,7 +90,7 @@ def main():
             st.rerun()
 
     # ------------------ MAIN HUB CONTENT ------------------
-    st.markdown(f"<h1>💡 BLOOMZ CORE: Spectral Intelligence</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1>💡Spectral Intelligence Hub💡</h1>", unsafe_allow_html=True)
     st.markdown(f"<p style='color:{BLOOMZ_GREEN}; font-weight:500;'>Verified Jordanian Botanical Library Access</p>", unsafe_allow_html=True)
     st.markdown('<div class="divider-strong"></div>', unsafe_allow_html=True)
 

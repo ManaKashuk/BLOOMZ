@@ -38,8 +38,10 @@ def _img_to_b64(path: Path) -> str:
     except: return ""
 
 def _show_bubble(text: str, avatar_b64: str = None, is_user=False):
-    """Renders the chat bubbles properly without raw code showing."""
-    bg = "#E8F5E9" if is_user else "#FFFFFF"
+    """Renders chat bubbles. User bubbles now match BLOOMZ Green."""
+    # Updated to BLOOMZ Green for User, White for Assistant
+    bg = BLOOMZ_GREEN if is_user else "#FFFFFF"
+    color = "white" if is_user else "#333"
     align = "flex-end" if is_user else "flex-start"
     
     avatar_html = ""
@@ -49,7 +51,7 @@ def _show_bubble(text: str, avatar_b64: str = None, is_user=False):
     st.markdown(f"""
         <div style="display:flex; align-items:center; justify-content:{align}; margin:10px 0;">
             {avatar_html}
-            <div style="background:{bg}; padding:15px; border-radius:15px; max-width:80%; box-shadow: 0px 2px 5px rgba(0,0,0,0.05); border: 1px solid #eee; color: #333;">
+            <div style="background:{bg}; padding:15px; border-radius:15px; max-width:80%; box-shadow: 0px 2px 5px rgba(0,0,0,0.05); border: 1px solid #eee; color: {color};">
                 {text}
             </div>
         </div>
@@ -59,13 +61,15 @@ def _show_bubble(text: str, avatar_b64: str = None, is_user=False):
 def main():
     st.set_page_config(page_title="BLOOMZ CORE", page_icon="🌿", layout="wide")
     
-    # Custom CSS to hide default menu and clean up sidebar
+    # Custom CSS for the Navigator look
     st.markdown(f"""
         <style>
         .stApp {{ background-color: {BLOOMZ_LIGHT}; }}
         [data-testid="stSidebar"] {{ background-color: white; border-right: 1px solid #eee; }}
-        .divider-strong {{ border-top: 5px solid #222; margin: 10px 0 25px 0; }}
+        .divider-strong {{ border-top: 5px solid #222; margin: 10px 0 25_px 0; }}
         .report-box {{ border: 2px solid {BLOOMZ_GREEN}; padding: 20px; border-radius: 12px; background: white; }}
+        /* Make chat input match brand */
+        .stChatInputContainer {{ border-radius: 10px; }}
         </style>
     """, unsafe_allow_html=True)
 
@@ -83,26 +87,27 @@ def main():
         st.divider()
         st.subheader("Agent Settings")
         species_context = st.selectbox("Species", ["Nigella sativa", "Artemisia sieberi", "General"])
-        mass_gate = st.slider("Gate (m/z)", 0.001, 0.010, 0.005)
+        mass_gate = st.slider("Gate (m/z)", 0.001, 0.010, 0.005, format="%.3f")
         
         if st.button("Clear Chat History"):
             st.session_state.chat = []
             st.rerun()
 
-    # ------------------ MAIN HUB CONTENT ------------------
+    # ------------------ MAIN HUB CONTENT (UPDATED TITLE) ------------------
     st.markdown(f"<h1>💡Spectral Intelligence Hub💡</h1>", unsafe_allow_html=True)
-    st.markdown(f"<p style='color:{BLOOMZ_GREEN}; font-weight:500;'>Verified Jordanian Botanical Library Access</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='color:{BLOOMZ_GREEN}; font-weight:500; font-size:1.2rem;'>Plant-to-Compound Intelligence Chain™</p>", unsafe_allow_html=True)
     st.markdown('<div class="divider-strong"></div>', unsafe_allow_html=True)
 
     if mode == "🏠 Home":
-        st.subheader("System Active")
-        st.info("Select a mode from the sidebar to begin. The engine is primed with 499 high-precision bioactives.")
-        st.markdown("""
+        st.subheader("System Status: Online")
+        st.info("The Spectral Intelligence engine is active. Select a mode from the sidebar to begin discovery.")
+        st.markdown(f"""
             <div style="background:white; padding:25px; border-radius:15px; border:1px solid #eee;">
-                <h4>Chain of Intelligence™ Protocol</h4>
-                <p>1. <b>Discovery:</b> Instant fuzzy-matching for lab verification.</p>
-                <p>2. <b>Batch:</b> Automated ±0.005 m/z annotation.</p>
-                <p>3. <b>COA:</b> Traceable Certificate of Analysis generation.</p>
+                <h4 style="color:{BLOOMZ_GREEN};">Core Capability</h4>
+                <p>Welcome to the <b>Spectral Intelligence Hub</b>. This workspace enables proactive discovery of bioactives using high-resolution library verification and agentic mass spectrometry scoring.</p>
+                <hr>
+                <li><b>Database:</b> 499 Verified Jordanian Compounds</li>
+                <li><b>Precision:</b> ±{mass_gate} m/z Enforcement</li>
             </div>
         """, unsafe_allow_html=True)
 
@@ -116,37 +121,42 @@ def main():
             for msg in st.session_state.chat:
                 _show_bubble(msg["content"], chat_avatar if msg["role"]=="asst" else None, is_user=(msg["role"]=="user"))
             
-            prompt = st.chat_input("Enter compound name...")
+            prompt = st.chat_input("Enter compound name or class...")
             if prompt:
                 st.session_state.chat.append({"role":"user", "content": prompt})
-                st.session_state.chat.append({"role":"asst", "content": f"Searching library for **{prompt}**... Filtering with ±{mass_gate} m/z gate."})
+                st.session_state.chat.append({"role":"asst", "content": f"Analyzing library evidence for **{prompt}**. Verification gate set to ±{mass_gate} m/z."})
                 st.rerun()
 
         with col_data:
             st.subheader("🔬 Library Match")
-            search = st.text_input("Refine Search", placeholder="e.g. Thymoquinone")
+            search = st.text_input("Filter Data", placeholder="Search compounds...")
             if search:
                 results = db[db["name"].str.contains(search, case=False, na=False)]
-                st.dataframe(results[["name", "exact_mass", "class"]].head(20), use_container_width=True)
+                st.dataframe(results[["name", "exact_mass", "class"]].head(25), use_container_width=True)
                 
-                if not results.empty and st.button("Generate Verified Report"):
+                if not results.empty and st.button("Generate Verified Report", use_container_width=True):
                     hit = results.iloc[0]
                     st.markdown(f"""
                         <div class="report-box">
-                            <h4 style="color:{BLOOMZ_GREEN}; margin:0;">Spectral Verification</h4>
+                            <h4 style="color:{BLOOMZ_GREEN}; margin:0;">Verified COA Summary</h4>
                             <b>Identity:</b> {hit['name']}<br>
-                            <b>Precision:</b> {hit['exact_mass']} (Gate: {mass_gate})<br>
+                            <b>Mass:</b> {hit['exact_mass']}<br>
+                            <b>Protocol:</b> Agentic ±{mass_gate} m/z Gate<br>
                             <b>Source:</b> {species_context}
                         </div>
                     """, unsafe_allow_html=True)
 
     elif mode == "📊 Batch Ingestion":
-        st.subheader("Instrument Table Processing")
-        st.file_uploader("Upload Shimadzu/Agilent CSV", type=["csv"])
+        st.subheader("Batch Instrument Ingestion")
+        st.write("Upload raw instrument peak tables (CSV) for batch annotation.")
+        st.file_uploader("📎 Upload CSV File", type=["csv"])
 
     elif mode == "📜 Registry":
-        st.subheader("COA Archive")
-        st.warning("No session records found.")
+        st.subheader("Traceability Registry")
+        st.warning("No records found in this session.")
+
+    st.markdown("---")
+    st.caption("© 2025 BLOOMZ GROUP • From Jordanian soil to the digital cloud.")
 
 if __name__ == "__main__":
     main()

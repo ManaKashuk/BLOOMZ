@@ -1,43 +1,48 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
+# =========================
+# file: app.py
+# =========================
+"""
+BLOOMZ CORE — The Spectral Intelligence
+- Weighted agent scoring: ±0.005 m/z gate, RT penalty, class plausibility
+- Export: Scored CSV + Digital Certificate of Analysis (On-screen)
+- No ReportLab dependency
+"""
+
+from __future__ import annotations
+import difflib
 import io
 import math
-import difflib
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional, Tuple
+import pandas as pd
+import streamlit as st
 
-# --- BRANDING & UI CONFIG ---
-st.set_page_config(
-    page_title="BLOOMZ CORE | The Spectral Intelligence",
-    page_icon="🌿",
-    layout="wide"
-)
-
-# Custom Styling for the "Intelligence Hub"
-st.markdown("""
-    <style>
-    .main { background-color: #F6F6F6; }
-    .stButton>button { background-color: #49735A; color: white; border-radius: 6px; width: 100%; }
-    .report-card { border: 1px solid #49735A; padding: 20px; border-radius: 10px; background-color: white; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- PARAMETERS & AGENTIC LOGIC [cite: 19-25] ---
+# -------------------------
+# Core params (spec: ±0.005) [cite: 21]
+# -------------------------
 @dataclass(frozen=True)
 class AgentParams:
-    mass_tolerance: float = 0.005 # Critical ±0.005 m/z gate 
-    rt_ref_tolerance: float = 0.30 
-    rt_penalty_weight: float = 0.25 # RT Penalty logic [cite: 23]
+    mass_tolerance: float = 0.005
+    top_k_blum: int = 5
+    rt_ref_tolerance: float = 0.30  # minutes
+    rt_heavy_early_strength: float = 0.25 
+    expected_rt_a: float = 3.0  
+    expected_rt_b: float = -5.0
     w_mass: float = 0.40
     w_name: float = 0.25
     w_manual_lib: float = 0.25
-    w_plaus: float = 0.10 # Molecular class plausibility 
+    w_plaus: float = 0.10
 
-# --- DATA INFERENCE & NORMALIZATION ---
-DB_NAME_COLS = ["name", "identifier", "Compound"]
-DB_MASS_COLS = ["exact_molecular_weight", "exact_mass", "mass"]
-DB_CLASS_COLS = ["chemical_class", "class", "chemical_super_class"]
+# -------------------------
+# Column inference helpers
+# -------------------------
+RT_COLS = ["RT", "Retention Time", "retention_time", "rt"]
+MZ_COLS = ["m/z", "mz", "Mass", "mass", "Base Peak", "base_peak", "MZ"]
+INT_COLS = ["Area", "Height", "Intensity", "intensity", "area", "height"]
+DB_NAME_COLS = ["name", "identifier", "Name", "Compound"]
+DB_MASS_COLS = ["exact_molecular_weight", "exact_mass", "mass", "Exact Mass"]
+DB_CLASS_COLS = ["chemical_class", "class", "superclass", "Class"]
 
 def _pick_col(df: pd.DataFrame, candidates: Iterable[str]) -> Optional[str]:
     lookup = {c.lower(): c for c in df.columns}
@@ -47,119 +52,144 @@ def _pick_col(df: pd.DataFrame, candidates: Iterable[str]) -> Optional[str]:
     return None
 
 def name_similarity(a: str, b: str) -> float:
-    return difflib.SequenceMatcher(None, str(a).lower(), str(b).lower()).ratio()
+    a, b = (a or "").strip().lower(), (b or "").strip().lower()
+    if not a or not b: return 0.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
 
-# --- SCORING FUNCTIONS ---
-def get_mass_score(sample_mz: float, ref_mz: float, tol: float) -> float:
+# -------------------------
+# Data loading
+# -------------------------
+def load_peaks_from_instrument_csv(file_bytes: bytes) -> pd.DataFrame:
+    df = pd.read_csv(io.BytesIO(file_bytes))
+    rt_col, mz_col = _pick_col(df, RT_COLS), _pick_col(df, MZ_COLS)
+    if not rt_col or not mz_col:
+        raise ValueError("Instrument CSV must include RT and m/z columns.")
+    int_col = _pick_col(df, INT_COLS)
+    peaks = pd.DataFrame({
+        "rt": pd.to_numeric(df[rt_col], errors="coerce"),
+        "mz": pd.to_numeric(df[mz_col], errors="coerce"),
+        "intensity": pd.to_numeric(df[int_col], errors="coerce") if int_col else 1.0,
+    }).dropna(subset=["rt", "mz"]).reset_index(drop=True)
+    peaks.index.name = "peak_id"
+    return peaks.reset_index()
+
+def normalize_blum_db(df: pd.DataFrame) -> pd.DataFrame:
+    name_col, mass_col = _pick_col(df, DB_NAME_COLS), _pick_col(df, DB_MASS_COLS)
+    if not name_col or not mass_col:
+        raise ValueError("BLUM DB must include name + mass columns.")
+    class_col = _pick_col(df, DB_CLASS_COLS)
+    out = pd.DataFrame({
+        "blum_name": df[name_col].fillna(df.get("identifier", "Unknown")).astype(str),
+        "blum_exact_mass": pd.to_numeric(df[mass_col], errors="coerce"),
+        "blum_class": df[class_col].astype(str) if class_col else "",
+    }).dropna(subset=["blum_exact_mass"]).reset_index(drop=True)
+    return out
+
+def load_blum_db(uploaded: Optional[bytes]) -> pd.DataFrame:
+    if uploaded: return normalize_blum_db(pd.read_csv(io.BytesIO(uploaded)))
+    for path in ["data/blum_db.csv", "data/BLUM_db.csv"]:
+        if os.path.exists(path): return normalize_blum_db(pd.read_csv(path))
+    raise FileNotFoundError("No BLUM DB found.")
+
+# -------------------------
+# Scoring model [cite: 19-25]
+# -------------------------
+def mass_term(sample_mz: float, ref_mz: float, tol: float) -> float:
     err = abs(sample_mz - ref_mz)
     return math.exp(-(err / max(tol, 1e-12))) if err <= tol else 0.0
 
-def get_rt_penalty(peak_rt, mass, a=3.0, b=-5.0):
-    # Heuristic: Expected RT = a*ln(mass) + b
-    expected = a * math.log(max(mass, 1e-9)) + b
-    delta = peak_rt - expected
-    return min(0.5, abs(delta) * 0.25) if delta < 0 else 0.0
+def rt_penalty(peak_rt: float, candidate_mass: float, params: AgentParams) -> Tuple[float, float]:
+    expected = params.expected_rt_a * math.log(max(candidate_mass, 1e-9)) + params.expected_rt_b
+    delta = float(peak_rt - expected)
+    penalty = min(0.5, abs(delta) * params.rt_heavy_early_strength) if delta < 0 else 0.0
+    return penalty, delta
 
-# --- THE AGENTIC ENGINE ---
-def agent_analyze(row, blum_db, species_keywords, params):
-    sample_mz = float(row["mz"])
-    peak_rt = float(row["rt"])
+DEFAULT_SPECIES_RULES: Dict[str, Dict[str, Any]] = {
+    "Nigella sativa": {"plausible_class_keywords": ["quinone", "thymo", "terpene", "phenolic", "alkaloid"]},
+    "Artemisia sieberi": {"plausible_class_keywords": ["terpene", "sesquiterpene", "monoterpene", "flavonoid"]},
+    "Boswellia sacra": {"plausible_class_keywords": ["triterpene", "boswellic", "terpene", "resin"]},
+}
+
+def plausibility_score(species: str, blum_class: str, keyword_csv: str) -> float:
+    cls = (blum_class or "").lower()
+    keywords = [k.strip().lower() for k in (keyword_csv or "").split(",") if k.strip()]
+    return 1.0 if any(k in cls for k in keywords) else 0.5
+
+def agent_score_row(row: pd.Series, blum: pd.DataFrame, species: str, plaus_keywords_csv: str, params: AgentParams) -> Dict[str, Any]:
+    sample_mz, peak_rt = float(row["mz"]), float(row["rt"])
+    manual_name = str(row.get("manual_hit_name", "") or "")
     
-    # Apply ±0.005 m/z Gate 
-    candidates = blum_db[
-        (blum_db["exact_mass"] >= sample_mz - params.mass_tolerance) & 
-        (blum_db["exact_mass"] <= sample_mz + params.mass_tolerance)
-    ].copy()
-
-    if candidates.empty:
-        return None
-
-    # Calculate Multi-Factor Scores
-    results = []
-    for _, cand in candidates.iterrows():
-        m_score = get_mass_score(sample_mz, cand["exact_mass"], params.mass_tolerance)
-        p_penalty = get_rt_penalty(peak_rt, cand["exact_mass"])
-        
-        # Plausibility Check 
-        is_plausible = any(k.lower() in str(cand["class"]).lower() for k in species_keywords)
-        plaus_score = 1.0 if is_plausible else 0.5
-        
-        # Final Agentic Confidence
-        conf = (params.w_mass * m_score) + (params.w_plaus * plaus_score) - p_penalty
-        conf = max(0.0, min(1.0, conf))
-        
-        results.append({
-            "name": cand["blum_name"],
-            "class": cand["class"],
-            "mass_error": round(cand["exact_mass"] - sample_mz, 5),
-            "confidence": round(conf, 3),
-            "grade": "High" if conf >= 0.85 else "Probable" if conf >= 0.65 else "Possible"
-        })
+    # Filter candidates within ±0.005 m/z gate [cite: 21]
+    lo, hi = sample_mz - params.mass_tolerance, sample_mz + params.mass_tolerance
+    cands = blum[(blum["blum_exact_mass"] >= lo) & (blum["blum_exact_mass"] <= hi)].copy()
     
-    return sorted(results, key=lambda x: x["confidence"], reverse=True)[0]
+    if cands.empty: return {"confidence": 0.0, "agent_grade": "Flagged", "best_blum_name": "None"}
 
-# --- INTERFACE: THE INTELLIGENCE HUB ---
+    cands["mass_term"] = cands["blum_exact_mass"].apply(lambda m: mass_term(sample_mz, float(m), params.mass_tolerance))
+    cands["name_sim"] = cands["blum_name"].apply(lambda n: name_similarity(manual_name, str(n)))
+    cands["plaus"] = cands["blum_class"].apply(lambda c: plausibility_score(species, str(c), plaus_keywords_csv))
+    
+    best = cands.sort_values("mass_term", ascending=False).iloc[0]
+    penalty, rt_delta = rt_penalty(peak_rt, float(best["blum_exact_mass"]), params)
+    
+    conf = (params.w_mass * best["mass_term"] + params.w_name * best["name_sim"] + params.w_plaus * best["plaus"] - penalty)
+    conf = max(0.0, min(1.0, conf))
+    grade = "High Confidence" if conf >= 0.90 else "Probable" if conf >= 0.70 else "Possible" if conf >= 0.50 else "Flagged"
+
+    return {
+        "best_blum_name": str(best["blum_name"]),
+        "best_blum_class": str(best["blum_class"]),
+        "confidence": round(conf, 3),
+        "agent_grade": grade,
+        "rt_delta": round(rt_delta, 3),
+        "rt_penalty": round(penalty, 3)
+    }
+
+# -------------------------
+# UI Implementation
+# -------------------------
 def main():
-    st.sidebar.image("https://via.placeholder.com/150x50?text=BLOOMZ+CORE")
-    st.sidebar.title("BLOOMZ CORE")
-    st.sidebar.markdown("**The Spectral Intelligence**")
-    
-    params = AgentParams() # Default params
-    
-    tab_ingest, tab_process, tab_report = st.tabs(["🌿 Ingest", "🧠 Agentic Analyze", "📄 Export COA"])
+    st.set_page_config(page_title="BLOOMZ CORE", page_icon="🌿", layout="wide")
+    st.title("🌿 BLOOMZ CORE — The Spectral Intelligence")
+    st.caption("Agentic workflow: ±0.005 m/z gate, RT penalty, and chemical plausibility. [cite: 8]")
 
-    with tab_ingest:
-        st.subheader("Data Ingestion Pipeline")
-        col1, col2 = st.columns(2)
-        with col1:
-            species = st.selectbox("Species Context", ["Nigella sativa", "Artemisia sieberi", "Boswellia sacra"])
-            keywords = ["quinone", "terpene", "phenolic"] if species == "Nigella sativa" else ["terpene"]
-        with col2:
-            peak_file = st.file_uploader("Upload Instrument CSV", type="csv")
-            db_file = st.file_uploader("Upload Reference DB (Optional)", type="csv")
+    with st.sidebar:
+        st.header("Agent Settings")
+        params = AgentParams(
+            mass_tolerance=float(st.number_input("Mass tolerance (± m/z)", value=0.005, format="%.6f")),
+            w_mass=float(st.slider("Weight: mass", 0.0, 1.0, 0.40))
+        )
+        st.divider()
+        blum_upload = st.file_uploader("Upload BLUM DB CSV", type=["csv"])
+
+    tab_upload, tab_process, tab_report = st.tabs(["🌿 Upload", "🔬 Process", "📄 Export"])
+
+    with tab_upload:
+        peaks_file = st.file_uploader("Instrument Export CSV", type=["csv"])
+        species = st.selectbox("Species Context", options=list(DEFAULT_SPECIES_RULES.keys()))
+        plaus_keywords = st.text_input("Plausibility keywords", value=", ".join(DEFAULT_SPECIES_RULES[species]["plausible_class_keywords"]))
+        if peaks_file:
+            st.session_state["peaks"] = load_peaks_from_instrument_csv(peaks_file.read())
+            st.session_state["meta"] = {"species": species, "plaus_keywords": plaus_keywords}
+            st.dataframe(st.session_state["peaks"].head(10))
 
     with tab_process:
-        if peak_file:
-            peaks_df = pd.read_csv(peak_file)
-            # Handle headers for reference DB
-            raw_db = pd.read_csv(db_file) if db_file else pd.read_csv("blum_db.csv")
-            
-            # Normalize DB for the Agent
-            name_c = _pick_col(raw_db, DB_NAME_COLS)
-            mass_c = _pick_col(raw_db, DB_MASS_COLS)
-            class_c = _pick_col(raw_db, DB_CLASS_COLS)
-            
-            blum_db = pd.DataFrame({
-                "blum_name": raw_db[name_c].fillna("Unknown"),
-                "exact_mass": pd.to_numeric(raw_db[mass_c], errors='coerce'),
-                "class": raw_db[class_c].fillna("Unclassified")
-            }).dropna(subset=["exact_mass"])
-
-            if st.button("Activate BLOOMZ CORE Intelligence", type="primary"):
-                results = []
-                for _, row in peaks_df.iterrows():
-                    res = agent_analyze(row, blum_db, keywords, params)
-                    if res:
-                        results.append({**row.to_dict(), **res})
-                
-                if results:
-                    st.session_state["scored_df"] = pd.DataFrame(results)
-                    st.success("Spectral Intelligence Analysis Complete.")
-                    st.dataframe(st.session_state["scored_df"], use_container_width=True)
+        if "peaks" not in st.session_state: st.warning("Upload data first.")
+        else:
+            blum = load_blum_db(blum_upload.read() if blum_upload else None)
+            if st.button("Activate Spectral Intelligence", type="primary"):
+                scored = st.session_state["peaks"].apply(lambda r: pd.Series(agent_score_row(r, blum, st.session_state["meta"]["species"], st.session_state["meta"]["plaus_keywords"], params)), axis=1)
+                st.session_state["scored"] = pd.concat([st.session_state["peaks"], scored], axis=1)
+                st.success("Analysis Complete.")
+                st.dataframe(st.session_state["scored"])
 
     with tab_report:
-        if "scored_df" in st.session_state:
-            st.markdown('<div class="report-card">', unsafe_allow_html=True)
-            st.markdown("### Verified Certificate of Analysis (Digital COA)")
-            st.write(f"**Target Species:** {species}")
-            st.write(f"**Verification Protocol:** Agentic ±0.005 m/z Gate")
+        if "scored" in st.session_state:
+            st.markdown("### Digital Certificate of Analysis")
+            st.caption("Verified by BLOOMZ CORE Agentic Scoring [cite: 248]")
+            st.table(st.session_state["scored"][st.session_state["scored"]["confidence"] >= 0.70][["peak_id", "rt", "mz", "best_blum_name", "confidence", "agent_grade"]])
             
-            report_df = st.session_state["scored_df"]
-            st.table(report_df[report_df["confidence"] >= 0.70][["name", "class", "confidence", "grade"]])
-            
-            csv = report_df.to_csv(index=False).encode('utf-8')
-            st.download_button("Download Verified COA (CSV)", data=csv, file_name="BLOOMZ_COA.csv", mime="text/csv")
-            st.markdown('</div>', unsafe_allow_html=True)
+            csv = st.session_state["scored"].to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Download Scored CSV", data=csv, file_name="bloomz_core_report.csv", mime="text/csv")
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()

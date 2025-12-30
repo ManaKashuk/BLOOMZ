@@ -24,7 +24,7 @@ def load_final_db():
         col_map = {"exact_molecular_weight": "exact_mass", "chemical_class": "class"}
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
         if "name" not in df.columns and "identifier" in df.columns: df["name"] = df["identifier"]
-        if "plant_source" not in df.columns: df["plant_source"] = "Jordanian Native"
+        if "plant_source" not in df.columns: df["plant_source"] = "Native Library"
         return df
     return pd.DataFrame(columns=["name", "exact_mass", "class", "plant_source"])
 
@@ -38,8 +38,7 @@ def _img_to_b64(path: Path) -> str:
     except: return ""
 
 def _show_bubble(text: str, avatar_b64: str = None, is_user=False):
-    """Renders chat bubbles. User bubbles now match BLOOMZ Green."""
-    # Updated to BLOOMZ Green for User, White for Assistant
+    """Renders chat bubbles. User bubbles match BLOOMZ Green."""
     bg = BLOOMZ_GREEN if is_user else "#FFFFFF"
     color = "white" if is_user else "#333"
     align = "flex-end" if is_user else "flex-start"
@@ -59,16 +58,15 @@ def _show_bubble(text: str, avatar_b64: str = None, is_user=False):
 
 # ------------------ MAIN APP ------------------
 def main():
-    st.set_page_config(page_title="BLOOMZ CORE", page_icon="🌿", layout="wide")
+    st.set_page_config(page_title="Spectral Intelligence Hub", page_icon="🌿", layout="wide")
     
     # Custom CSS for the Navigator look
     st.markdown(f"""
         <style>
         .stApp {{ background-color: {BLOOMZ_LIGHT}; }}
         [data-testid="stSidebar"] {{ background-color: white; border-right: 1px solid #eee; }}
-        .divider-strong {{ border-top: 5px solid #222; margin: 10px 0 25_px 0; }}
+        .divider-strong {{ border-top: 5px solid #222; margin: 10px 0 25px 0; }}
         .report-box {{ border: 2px solid {BLOOMZ_GREEN}; padding: 20px; border-radius: 12px; background: white; }}
-        /* Make chat input match brand */
         .stChatInputContainer {{ border-radius: 10px; }}
         </style>
     """, unsafe_allow_html=True)
@@ -93,7 +91,7 @@ def main():
             st.session_state.chat = []
             st.rerun()
 
-    # ------------------ MAIN HUB CONTENT (UPDATED TITLE) ------------------
+    # ------------------ MAIN HUB CONTENT ------------------
     st.markdown(f"<h1>💡Spectral Intelligence Hub💡</h1>", unsafe_allow_html=True)
     st.markdown(f"<p style='color:{BLOOMZ_GREEN}; font-weight:500; font-size:1.2rem;'>Plant-to-Compound Intelligence Chain™</p>", unsafe_allow_html=True)
     st.markdown('<div class="divider-strong"></div>', unsafe_allow_html=True)
@@ -156,7 +154,7 @@ def main():
         st.warning("No records found in this session.")
 
     st.markdown("---")
-    st.caption("© 2025 BLOOMZ GROUP • From Jordanian soil to the digital cloud.")
+    st.caption("© 2025 BLOOMZ GROUP • From soil to the digital cloud.")
 
 if __name__ == "__main__":
     main()

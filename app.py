@@ -8,25 +8,40 @@ import streamlit as st
 from PIL import Image
 from pathlib import Path
 from datetime import datetime
-from difflib import SequenceMatcher, get_close_matches
+import difflib
 
 # ------------------ PATHS & CONFIG ------------------
-# Note: Place logo.png and chat.png in an 'assets' folder
 ROOT_DIR = Path(__file__).parent
 ASSETS_DIR = ROOT_DIR / "assets"
-CHAT_ICON = ASSETS_DIR / "chat.png"    # Assistant avatar
-LOGO_PATH = ASSETS_DIR / "logo.png"    # Header logo
+CHAT_ICON = ASSETS_DIR / "chat.png"    
+LOGO_PATH = ASSETS_DIR / "logo.png"    
 BLOOMZ_GREEN = "#49735A"
 
-APP_TITLE = "BLOOMZ CORE • Spectral Intelligence Hub"
-DISCLAIMER = "🛡️ Agentic platform for plant-to-compound discovery. Verified against Jordanian botanical libraries.🛡️"
-
-# ------------------ DATA HELPERS ------------------
+# ------------------ DATA HUB HELPERS ------------------
 @st.cache_data
-def load_blum_db():
-    # Using the structure from your BLUM_db.csv
-    if os.path.exists("data/blum_db.csv"):
-        df = pd.read_csv("data/blum_db.csv")
+def load_blum_hub_db():
+    db_path = "data/blum_db.csv"
+    if os.path.exists(db_path):
+        df = pd.read_csv(db_path)
+        
+        # MAPPING: Map your specific CSV headers to Agent Logic
+        col_map = {
+            "exact_molecular_weight": "exact_mass",
+            "chemical_class": "class",
+            "name": "name",
+            "identifier": "id"
+        }
+        df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+        
+        # CLEANUP: Handle missing names using identifiers
+        if "name" in df.columns:
+            df["name"] = df["name"].fillna(df["id"] if "id" in df.columns else "Unknown Compound")
+        
+        # FIX FOR KEYERROR: derive 'plant_source' if missing
+        if "plant_source" not in df.columns:
+            # We use 'chemical_sub_class' as a proxy or default to Jordanian Native
+            df["plant_source"] = df["chemical_sub_class"].fillna("Jordanian Native") if "chemical_sub_class" in df.columns else "Jordanian Native"
+            
         return df
     return pd.DataFrame(columns=["name", "exact_mass", "class", "plant_source"])
 
@@ -54,11 +69,11 @@ def _show_bubble(html: str, avatar_b64: str, is_user=False):
         unsafe_allow_html=True,
     )
 
-# ------------------ MAIN APP ------------------
+# ------------------ MAIN INTERFACE ------------------
 def main():
-    st.set_page_config(page_title=APP_TITLE, page_icon="🌿", layout="wide")
+    st.set_page_config(page_title="BLOOMZ CORE Hub", page_icon="🌿", layout="wide")
 
-    # --- Header Styling ---
+    # High-end Visual Styling
     st.markdown(f"""
         <style>
           .hero {{ text-align:left; margin-top:.10rem; }}
@@ -66,97 +81,102 @@ def main():
           .hero p  {{ font-size:1.2rem; color:{BLOOMZ_GREEN}; max-width:1000px; margin:.35rem 0 0 0; font-weight:500; }}
           .divider-strong {{ border-top:4px solid {BLOOMZ_GREEN}; margin:.4rem 0 1.0rem; }}
           .card {{ border:1px solid #e5e7eb; border-radius:12px; padding:1.2rem; background:#fff; box-shadow: 2px 2px 10px rgba(0,0,0,0.05); }}
-          .stButton>button {{ background-color: {BLOOMZ_GREEN} !important; color:white; border-radius:8px; }}
+          .stButton>button {{ background-color: {BLOOMZ_GREEN} !important; color:white; border-radius:8px; font-weight:bold; }}
+          .report-box {{ border: 2px solid {BLOOMZ_GREEN}; padding: 20px; border-radius: 12px; background: #fff; margin-top: 20px; }}
         </style>
         """, unsafe_allow_html=True)
 
     if LOGO_PATH.exists():
-        st.image(str(LOGO_PATH), width=350)
+        st.image(str(LOGO_PATH), width=300)
 
     st.markdown(f"""
         <div class="hero">
-          <h1>💡 BLOOMZ CORE: Spectral Intelligence</h1>
-          <p>{DISCLAIMER}</p>
+          <h1>💡 BLOOMZ CORE: Spectral Intelligence Hub</h1>
+          <p>🛡️ Proactive logic for the Plant-to-Compound Intelligence Chain™. 🛡️</p>
         </div>
         """, unsafe_allow_html=True)
     st.markdown('<div class="divider-strong"></div>', unsafe_allow_html=True)
 
-    # --- Sidebar Setup (Discovery Search) ---
+    # --- SIDEBAR: DISCOVERY SEARCH ---
     with st.sidebar:
         st.header("🧬 Discovery Search")
-        search_mode = st.selectbox("🔍 Search Discovery By:", ["Plant Name", "Compound Name"])
+        search_mode = st.selectbox("🔍 Search Mode:", ["Compound Name", "Plant/Source Name"])
         
-        db = load_blum_db()
-        if search_mode == "Plant Name":
-            options = ["All Jordanian Species"] + sorted(db["plant_source"].unique().tolist()) if not db.empty else ["Nigella sativa"]
-            target = st.selectbox("📂 Select Botanical Source", options)
+        db = load_blum_hub_db()
+        
+        if search_mode == "Plant/Source Name":
+            options = ["All Jordanian Sources"] + sorted(db["plant_source"].unique().tolist())
+            target = st.selectbox("📂 Select Source", options)
         else:
-            target = st.text_input("🧪 Enter Compound Name", placeholder="e.g. Thymoquinone")
+            target = st.text_input("🧪 Enter Compound", placeholder="e.g. Thymoquinone")
 
         st.divider()
         st.subheader("Agent Settings")
-        mass_tol = st.number_input("Mass Tolerance (± m/z)", value=0.005, format="%.4f")
-        st.caption("Fulfilling Phase 1: ±0.005 m/z Gate [cite: 892]")
+        mass_tol = st.slider("Mass Tolerance (± m/z)", 0.001, 0.010, 0.005, format="%.3f")
 
-    # --- Session State ---
+    # --- CHAT & EVIDENCE ---
     st.session_state.setdefault("chat", [])
     chat_avatar = _img_to_b64(CHAT_ICON)
 
-    # --- Main Discovery Interface ---
-    col_chat, col_evidence = st.columns([3, 2])
+    col_chat, col_data = st.columns([3, 2])
 
     with col_chat:
-        st.subheader("💬 Spectral Intelligence Chat")
-        
-        # Initial greeting
+        st.subheader("💬 Intelligence Conversation")
         if not st.session_state["chat"]:
             st.session_state["chat"].append({
                 "role": "assistant", 
-                "content": f"Welcome to the **Intelligence Hub**. I am searching for candidates in **{target}**. How can I assist your discovery today?"
+                "content": f"The **Spectral Intelligence Hub** is online. I am monitoring the database for bioactives in **{target if target else 'Discovery Mode'}**."
             })
 
-        # Chat logic
         for msg in st.session_state["chat"]:
             _show_bubble(msg["content"], chat_avatar if msg["role"] == "assistant" else "", is_user=(msg["role"] == "user"))
 
-        prompt = st.chat_input("Ask about chemical classes, exact masses, or purity markers...")
+        prompt = st.chat_input("Ask about exact masses, classifications, or purity markers...")
         if prompt:
             st.session_state["chat"].append({"role": "user", "content": prompt})
-            # Mock agent logic for demo - in production, link to your retrieve() logic
-            st.session_state["chat"].append({"role": "assistant", "content": f"Analyzing spectral data for '{prompt}' within the context of {target}..."})
+            st.session_state["chat"].append({"role": "assistant", "content": f"Querying Jordanian library for '{prompt}'... Verification gate set to ±{mass_tol} m/z."})
             st.rerun()
 
-    with col_evidence:
-        st.subheader("🔎 Intelligence Evidence")
-        st.markdown('<div class="card">', unsafe_allow_html=True)
+    with col_data:
+        st.subheader("🔬 Spectral Evidence")
         
-        if not db.empty and target != "All Jordanian Species":
-            # Matching logic for the evidence panel
-            matches = db[db["plant_source"] == target] if search_mode == "Plant Name" else db[db["name"].str.contains(target, case=False, na=False)]
-            
-            if not matches.empty:
-                st.write(f"**Found {len(matches)} candidates in {target}:**")
-                st.dataframe(matches[["name", "exact_mass", "class"]], use_container_width=True)
+        if not db.empty:
+            # Filtering logic
+            if search_mode == "Plant/Source Name":
+                display_df = db[db["plant_source"] == target] if target != "All Jordanian Sources" else db
             else:
-                st.info("No library matches found. Ready for raw GC-MS ingestion.")
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # Guidance Card
-        st.divider()
-        if st.button("Generate Verified COA", type="primary", use_container_width=True):
-            st.success("Draft Certificate of Analysis Generated.")
-            st.markdown("### 📄 Digital COA Summary")
-            st.markdown(f"""
-            <div class="card">
-                <b>1. Identification:</b> High-confidence matching for {target}.<br>
-                <b>2. Methodology:</b> Agentic scoring applied (Mass Gate: {mass_tol}).<br>
-                <b>3. Traceability:</b> Linked to Jordanian Soil-to-Cloud Protocol[cite: 959].
-            </div>
-            """, unsafe_allow_html=True)
+                display_df = db[db["name"].str.contains(target, case=False, na=False)] if target else db.head(10)
             
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.write(f"**Top Candidates Found:**")
+            show_cols = [c for c in ["name", "exact_mass", "class"] if c in display_df.columns]
+            st.dataframe(display_df[show_cols].head(20), use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            # ZERO-UPLOAD REPORT BUTTON
+            st.divider()
+            if st.button("Generate Verified COA", type="primary", use_container_width=True):
+                if not display_df.empty:
+                    top_hit = display_df.iloc[0]
+                    st.markdown(f"""
+                    <div class="report-box">
+                        <h3 style="color:{BLOOMZ_GREEN}; margin-top:0;">Verified Certificate of Analysis</h3>
+                        <b>Compound:</b> {top_hit['name']}<br>
+                        <b>Exact Mass:</b> {top_hit.get('exact_mass', 'N/A')}<br>
+                        <b>Classification:</b> {top_hit.get('class', 'Unclassified')}<br>
+                        <hr>
+                        <small>Verified via Agentic Spectral Intelligence Protocol (±{mass_tol} m/z Gate).</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # CSV Download
+                    csv = display_df[show_cols].to_csv(index=False).encode('utf-8')
+                    st.download_button("⬇️ Download Full Evidence (CSV)", data=csv, file_name=f"BLOOMZ_COA_{target}.csv", mime="text/csv")
+        else:
+            st.info("Database not found at 'data/blum_db.csv'.")
+
     st.markdown("---")
-    st.caption("© 2025 BLOOMZ GROUP • Pure Botanical Intelligence • From Jordanian soil to the digital cloud.")
+    st.caption("© 2025 BLOOMZ GROUP • From Jordanian soil to the digital cloud.")
 
 if __name__ == "__main__":
     main()

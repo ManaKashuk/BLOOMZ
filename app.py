@@ -476,7 +476,7 @@ def main():
         admin_panel()
 
     st.markdown("---")
-    st.caption("© 2025 BLOOMZ • Mass spectrometry tools built for under-resourced labs.")
+    st.caption("© 2028 BLOOMZ.io • Mass spectrometry tools built for under-resourced labs.")
 
 
 if __name__ == "__main__":
